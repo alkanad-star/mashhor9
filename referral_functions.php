@@ -174,7 +174,7 @@ function getUserReferralStats($user_id) {
         'referred_users' => []
     ];
     
-    // Get user's referral code
+    // Get user's referral code and earnings
     $stmt = $conn->prepare("SELECT referral_code, total_referral_earnings FROM users WHERE id = ?");
     $stmt->bind_param("i", $user_id);
     $stmt->execute();
@@ -182,7 +182,18 @@ function getUserReferralStats($user_id) {
     
     if ($result->num_rows > 0) {
         $user = $result->fetch_assoc();
-        $stats['total_earnings'] = $user['total_referral_earnings'];
+        
+        // For total earnings, we'll query the actual sum from referrals table
+        $earnings_query = $conn->prepare("
+            SELECT SUM(reward_amount) as total_earnings 
+            FROM referrals 
+            WHERE referrer_id = ? AND status = 'completed' AND reward_paid = 1
+        ");
+        $earnings_query->bind_param("i", $user_id);
+        $earnings_query->execute();
+        $earnings_result = $earnings_query->get_result()->fetch_assoc();
+        
+        $stats['total_earnings'] = $earnings_result['total_earnings'] ?? 0;
         
         // Generate referral code if user doesn't have one
         if (empty($user['referral_code'])) {
@@ -196,7 +207,7 @@ function getUserReferralStats($user_id) {
         }
     }
     
-    // Count users who were referred by this user (looking at referred_by column)
+    // Count users who were referred by this user
     $stmt = $conn->prepare("SELECT COUNT(*) as total_referrals FROM users WHERE referred_by = ?");
     $stmt->bind_param("i", $user_id);
     $stmt->execute();
@@ -207,16 +218,17 @@ function getUserReferralStats($user_id) {
         $stats['total_referrals'] = $counts['total_referrals'];
     }
     
-    // Get list of referred users
+    // Get list of referred users with accurate order counts and rewards
     $stmt = $conn->prepare("
-        SELECT u.id, u.username, u.full_name, u.created_at, 
-               COUNT(o.id) as order_count,
-               SUM(r.reward_amount) as rewards_generated
+        SELECT 
+            u.id, 
+            u.username, 
+            u.full_name, 
+            u.created_at,
+            (SELECT COUNT(*) FROM orders WHERE user_id = u.id) as order_count,
+            (SELECT SUM(reward_amount) FROM referrals WHERE referrer_id = ? AND referred_id = u.id AND status = 'completed') as rewards_generated
         FROM users u
-        LEFT JOIN orders o ON u.id = o.user_id
-        LEFT JOIN referrals r ON u.id = r.referred_id AND r.referrer_id = ?
         WHERE u.referred_by = ?
-        GROUP BY u.id
         ORDER BY u.created_at DESC
         LIMIT 10
     ");
@@ -225,6 +237,9 @@ function getUserReferralStats($user_id) {
     $result = $stmt->get_result();
     
     while ($row = $result->fetch_assoc()) {
+        // Ensure values are not null
+        $row['order_count'] = $row['order_count'] ?? 0;
+        $row['rewards_generated'] = $row['rewards_generated'] ?? 0;
         $stats['referred_users'][] = $row;
     }
     
