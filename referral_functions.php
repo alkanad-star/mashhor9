@@ -158,6 +158,80 @@ function createReferral($referrer_id, $referred_id) {
 }
 
 /**
+ * Get referral statistics for a user
+ * 
+ * @param int $user_id User ID
+ * @return array Statistics about user's referrals
+ */
+function getUserReferralStats($user_id) {
+    global $conn;
+    
+    $stats = [
+        'total_referrals' => 0,
+        'completed_referrals' => 0,
+        'total_earnings' => 0,
+        'referral_code' => '',
+        'referred_users' => []
+    ];
+    
+    // Get user's referral code
+    $stmt = $conn->prepare("SELECT referral_code, total_referral_earnings FROM users WHERE id = ?");
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($result->num_rows > 0) {
+        $user = $result->fetch_assoc();
+        $stats['total_earnings'] = $user['total_referral_earnings'];
+        
+        // Generate referral code if user doesn't have one
+        if (empty($user['referral_code'])) {
+            $referral_code = generateReferralCode($user_id);
+            $update = $conn->prepare("UPDATE users SET referral_code = ? WHERE id = ?");
+            $update->bind_param("si", $referral_code, $user_id);
+            $update->execute();
+            $stats['referral_code'] = $referral_code;
+        } else {
+            $stats['referral_code'] = $user['referral_code'];
+        }
+    }
+    
+    // Count users who were referred by this user (looking at referred_by column)
+    $stmt = $conn->prepare("SELECT COUNT(*) as total_referrals FROM users WHERE referred_by = ?");
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($result->num_rows > 0) {
+        $counts = $result->fetch_assoc();
+        $stats['total_referrals'] = $counts['total_referrals'];
+    }
+    
+    // Get list of referred users
+    $stmt = $conn->prepare("
+        SELECT u.id, u.username, u.full_name, u.created_at, 
+               COUNT(o.id) as order_count,
+               SUM(r.reward_amount) as rewards_generated
+        FROM users u
+        LEFT JOIN orders o ON u.id = o.user_id
+        LEFT JOIN referrals r ON u.id = r.referred_id AND r.referrer_id = ?
+        WHERE u.referred_by = ?
+        GROUP BY u.id
+        ORDER BY u.created_at DESC
+        LIMIT 10
+    ");
+    $stmt->bind_param("ii", $user_id, $user_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    while ($row = $result->fetch_assoc()) {
+        $stats['referred_users'][] = $row;
+    }
+    
+    return $stats;
+}
+
+/**
  * Process order-based referral rewards
  * 
  * @param int $user_id User ID who placed the order
@@ -346,85 +420,4 @@ function completePendingReferralReward($order_id) {
         error_log("Complete referral reward error: " . $e->getMessage());
         return false;
     }
-}
-
-/**
- * Get referral statistics for a user
- * 
- * @param int $user_id User ID
- * @return array Statistics about user's referrals
- */
-function getUserReferralStats($user_id) {
-    global $conn;
-    
-    $stats = [
-        'total_referrals' => 0,
-        'completed_referrals' => 0,
-        'total_earnings' => 0,
-        'referral_code' => '',
-        'referred_users' => []
-    ];
-    
-    // Get user's referral code
-    $stmt = $conn->prepare("SELECT referral_code, total_referral_earnings FROM users WHERE id = ?");
-    $stmt->bind_param("i", $user_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows > 0) {
-        $user = $result->fetch_assoc();
-        $stats['total_earnings'] = $user['total_referral_earnings'];
-        
-        // Generate referral code if user doesn't have one
-        if (empty($user['referral_code'])) {
-            $referral_code = generateReferralCode($user_id);
-            $update = $conn->prepare("UPDATE users SET referral_code = ? WHERE id = ?");
-            $update->bind_param("si", $referral_code, $user_id);
-            $update->execute();
-            $stats['referral_code'] = $referral_code;
-        } else {
-            $stats['referral_code'] = $user['referral_code'];
-        }
-    }
-    
-    // Get count of referrals
-    $stmt = $conn->prepare("
-        SELECT 
-            COUNT(*) as total_referrals,
-            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_referrals
-        FROM referrals 
-        WHERE referrer_id = ?
-    ");
-    $stmt->bind_param("i", $user_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows > 0) {
-        $counts = $result->fetch_assoc();
-        $stats['total_referrals'] = $counts['total_referrals'];
-        $stats['completed_referrals'] = $counts['completed_referrals'];
-    }
-    
-    // Get list of referred users
-    $stmt = $conn->prepare("
-        SELECT u.id, u.username, u.full_name, u.created_at, 
-               COUNT(o.id) as order_count,
-               SUM(r.reward_amount) as rewards_generated
-        FROM users u
-        LEFT JOIN orders o ON u.id = o.user_id
-        LEFT JOIN referrals r ON u.id = r.referred_id AND r.referrer_id = ?
-        WHERE u.referred_by = ?
-        GROUP BY u.id
-        ORDER BY u.created_at DESC
-        LIMIT 10
-    ");
-    $stmt->bind_param("ii", $user_id, $user_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    while ($row = $result->fetch_assoc()) {
-        $stats['referred_users'][] = $row;
-    }
-    
-    return $stats;
 }
