@@ -306,7 +306,7 @@ include 'header.php';
                     <div class="card mb-4">
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <h5 class="mb-0">برنامج الربح</h5>
-                            <a href="earnings" class="btn btn-sm btn-primary">عرض التفاصيل</a>
+                            <a href="earnings.php" class="btn btn-sm btn-primary">عرض التفاصيل</a>
                         </div>
                         <div class="card-body">
                             <div class="referral-stat mb-3">
