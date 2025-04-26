@@ -219,13 +219,14 @@ function getUserReferralStats($user_id) {
     }
     
     // Get list of referred users with accurate order counts and rewards
+    // UPDATED: Now only counting completed orders
     $stmt = $conn->prepare("
         SELECT 
             u.id, 
             u.username, 
             u.full_name, 
             u.created_at,
-            (SELECT COUNT(*) FROM orders WHERE user_id = u.id) as order_count,
+            (SELECT COUNT(*) FROM orders WHERE user_id = u.id AND status = 'completed') as order_count,
             (SELECT SUM(reward_amount) FROM referrals WHERE referrer_id = ? AND referred_id = u.id AND status = 'completed') as rewards_generated
         FROM users u
         WHERE u.referred_by = ?
